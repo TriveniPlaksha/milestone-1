@@ -403,7 +403,7 @@ python -m pytest tests/test_safety_engine.py -v
 | S9 | Critical component unhealthy | `FAULT` |
 | S10 | WALK changes to DONT_WALK | leaves `WALK` immediately → `WAIT` |
 
-Expected output:
+<!--Expected output:
 
 ```
 collected 10 items
@@ -423,6 +423,7 @@ tests/test_safety_engine.py::test_s10_walk_then_dont_walk PASSED         [100%]
 ```
 
 ---
+-->
 
 ## Decision log
 
@@ -490,7 +491,7 @@ Alongside these fields the engine records predicate results (`Sv` to `Tv`), cand
 
 ---
 
-## Out of scope for Milestone 01
+<!--## Out of scope for Milestone 01
 
 - Real BLE 5.1 AoA / UWB / GPS hardware integration
 - Android or wearable app
@@ -498,4 +499,4 @@ Alongside these fields the engine records predicate results (`Sv` to `Tv`), cand
 - RTK or multi-sensor position fusion
 - Multiple intersections
 - Pedestrian intent detection
-- Audio / haptic output
+- Audio / haptic output -->
