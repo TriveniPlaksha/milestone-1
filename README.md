@@ -28,7 +28,7 @@ The output is exactly **one** of `WALK | WAIT | UNAVAILABLE | FAULT`, plus one o
 11. [Decision log](#decision-log)
 12. [Reason codes](#reason-codes)
 13. [Known limitations and assumptions](#known-limitations-and-assumptions)
-14. [Out of scope for Milestone 01](#out-of-scope-for-milestone-01)
+<!--14. [Out of scope for Milestone 01](#out-of-scope-for-milestone-01) -->
 
 ---
 
