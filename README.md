@@ -95,7 +95,7 @@ flowchart LR
     D --> LOG[Structured event log .jsonl]
     D --> Q[triveni_query.py – Interactive CLI]
 ```
-
+<!--
 Future technologies connect through adapters that convert real data into these same internal objects:
 
 | Future technology | Internal TRIVENI object |
@@ -105,6 +105,7 @@ Future technologies connect through adapters that convert real data into these s
 | J2735 MAP / GeoJSON / manual map | `CrosswalkMap` |
 | Edge hardware monitoring | `SystemHealth` |
 | Android / wearable / audio | `GuidanceDecision` |
+-->
 
 ### Signal model: two-phase India-style
 
