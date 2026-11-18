@@ -4,7 +4,15 @@
 Usage:
     python run_demo.py              # all demos in sequence
     python run_demo.py --pause      # pause for Enter between demos (for screen recording)
-    python run_demo.py --slow       # add 0.2 s display delay per tick in Demo E (screen recording)
+    python run_demo.py --slow       # add 0.2 s display delay per tick in Demo E
+
+Signal model: two-phase India-style (no separate pedestrian-only phase).
+  Phase A  E-W vehicles GREEN  ->  CW_NORTH & CW_SOUTH: WALK
+                                   (peds cross the N-S road, moving East<->West)
+  Phase B  N-S vehicles GREEN  ->  CW_EAST  & CW_WEST:  WALK
+                                   (peds cross the E-W road, moving North<->South)
+
+Cycle = 100 000 ms  (45 s Phase A + 5 s Clearance + 45 s Phase B + 5 s Clearance).
 
 At the end the path to logs/decision_log.jsonl is printed.
 """
@@ -27,7 +35,10 @@ from triveni.models.system_health import SystemHealth
 from triveni.safety.safety_engine import evaluate, EvaluationResult
 from triveni.logging.event_logger import EventLogger
 from triveni.simulator.signal_simulator import (
-    make_all_signals, make_stale_signal, four_phase_signals,
+    make_stale_signal,
+    two_phase_signals,
+    TWO_PHASE_CYCLE_MS,
+    TWO_PHASE_EW_GREEN_MS,
 )
 from triveni.simulator.pedestrian_simulator import (
     make_localization,
@@ -110,24 +121,30 @@ def _narrate(title: str, story: str, inputs: dict, result: EvaluationResult) -> 
 
 # ---------------------------------------------------------------------------
 # Demo A: Valid crossing
+# Phase A active (E-W vehicles GREEN); CW_NORTH & CW_SOUTH are WALK.
+# Pedestrian at CW_NORTH entry crosses parallel to E-W traffic.
 # ---------------------------------------------------------------------------
 
 def demo_a(pause: bool) -> None:
-    now_ms = 100_000
-    signals = make_all_signals(now_ms, states={"CW_NORTH": "WALK"}, remaining_times={"CW_NORTH": 18_000})
+    # cycle position t=10000 -> Phase A; CW_NORTH remaining = 45000-10000 = 35000 ms
+    now_ms = 10_000
+    signals = two_phase_signals(now_ms, cycle_start_ms=0)
     loc = preset_near_correct_crosswalk(now_ms)
     result = evaluate(signals, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
     LOGGER.log(result.decision, result.evidence)
     ev = result.evidence
     _narrate(
-        title="DEMO A - Valid Crossing",
+        title="DEMO A - Valid Crossing  [Phase A: E-W vehicles GREEN, CW_NORTH WALK]",
         story=(
-            "A pedestrian stands at the CW_NORTH curb (5.5, 9.5).\n"
-            "  The signal is WALK with 18 s remaining. Data is fresh, system healthy.\n"
-            "  All six predicates pass -> TRIVENI says WALK."
+            "E-W vehicles are green (Phase A). Pedestrian at CW_NORTH curb (5.5, 9.5)\n"
+            "  crosses the N-S road — parallel to the E-W vehicle green arm.\n"
+            "  Signal WALK, 35 s remaining. Data fresh, system healthy -> TRIVENI says WALK."
         ),
         inputs={
-            "CW_NORTH signal": "WALK  age={} ms  remaining=18000 ms".format(ev.get("signal_age_ms")),
+            "Signal phase":    "A — E-W vehicles GREEN  (cycle t=10 000 ms)",
+            "CW_NORTH signal": "WALK  age={} ms  remaining={} ms".format(
+                ev.get("signal_age_ms"), ev.get("remaining_time_ms")),
+            "CW_EAST signal":  "DONT_WALK  (N-S crossing waits for Phase B)",
             "Pedestrian":      "(5.5, 9.5)  uncertainty=0.75 m  zone=CW_NORTH entry",
             "System health":   "ALL OK",
         },
@@ -138,23 +155,25 @@ def demo_a(pause: bool) -> None:
 
 # ---------------------------------------------------------------------------
 # Demo B: Ambiguous crosswalk
+# Phase A active; pedestrian at the NE corner shared by two zone polygons.
 # ---------------------------------------------------------------------------
 
 def demo_b(pause: bool) -> None:
-    now_ms = 101_000
-    signals = make_all_signals(now_ms, states={"CW_NORTH": "WALK"}, remaining_times={"CW_NORTH": 18_000})
+    now_ms = 11_000
+    signals = two_phase_signals(now_ms, cycle_start_ms=0)
     loc = preset_between_two_crosswalks(now_ms)   # (8.0, 8.0)
     result = evaluate(signals, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
     LOGGER.log(result.decision, result.evidence)
     ev = result.evidence
     _narrate(
-        title="DEMO B - Ambiguous Crosswalk",
+        title="DEMO B - Ambiguous Crosswalk  [Phase A: CW_NORTH WALK, ped at corner]",
         story=(
-            "A pedestrian stands at (8.0, 8.0) - the NE corner shared by CW_NORTH\n"
-            "  entry and CW_EAST exit zones.  TRIVENI cannot determine which crosswalk\n"
-            "  is intended -> CROSSWALK_AMBIGUOUS -> UNAVAILABLE."
+            "Phase A active (CW_NORTH WALK). Pedestrian stands at (8.0, 8.0) —\n"
+            "  NE corner shared by CW_NORTH entry zone and CW_EAST exit zone.\n"
+            "  TRIVENI cannot determine intended crosswalk -> CROSSWALK_AMBIGUOUS -> UNAVAILABLE."
         ),
         inputs={
+            "Signal phase":    "A — E-W vehicles GREEN  (cycle t=11 000 ms)",
             "CW_NORTH signal": "WALK  age={} ms".format(ev.get("signal_age_ms")),
             "Pedestrian":      "(8.0, 8.0)  uncertainty=0.75 m  zone=AMBIGUOUS",
             "System health":   "ALL OK",
@@ -166,24 +185,31 @@ def demo_b(pause: bool) -> None:
 
 # ---------------------------------------------------------------------------
 # Demo C: Stale signal
+# Phase A active; CW_NORTH signal data is 900 ms old (above 500 ms threshold).
 # ---------------------------------------------------------------------------
 
 def demo_c(pause: bool) -> None:
-    now_ms = 102_000
-    stale = make_stale_signal("CW_NORTH", "WALK", now_ms, stale_age_ms=900, remaining_time_ms=18_000)
-    signals = {"CW_NORTH": stale}
+    now_ms = 12_000
+    # Build two-phase signals, then override CW_NORTH with a stale reading
+    signals = dict(two_phase_signals(now_ms, cycle_start_ms=0))
+    signals["CW_NORTH"] = make_stale_signal(
+        "CW_NORTH", "WALK", now_ms, stale_age_ms=900, remaining_time_ms=33_000,
+    )
     loc = preset_near_correct_crosswalk(now_ms)
     result = evaluate(signals, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
     LOGGER.log(result.decision, result.evidence)
     ev = result.evidence
     _narrate(
-        title="DEMO C - Stale Signal",
+        title="DEMO C - Stale Signal  [Phase A: CW_NORTH data 900 ms old]",
         story=(
-            "Signal data from CW_NORTH is 900 ms old - above the 500 ms freshness\n"
-            "  threshold.  TRIVENI rejects stale data -> SIGNAL_STALE -> UNAVAILABLE."
+            "Phase A active but CW_NORTH signal data is 900 ms old — above the\n"
+            "  500 ms freshness threshold. TRIVENI rejects stale data even when\n"
+            "  signal says WALK -> SIGNAL_STALE -> UNAVAILABLE."
         ),
         inputs={
-            "CW_NORTH signal": "WALK  age={} ms  (threshold=500 ms)".format(ev.get("signal_age_ms")),
+            "Signal phase":    "A — E-W vehicles GREEN  (cycle t=12 000 ms)",
+            "CW_NORTH signal": "WALK  age={} ms  (threshold=500 ms)".format(
+                ev.get("signal_age_ms")),
             "Pedestrian":      "(5.5, 9.5)  uncertainty=0.75 m",
             "System health":   "ALL OK",
         },
@@ -193,26 +219,31 @@ def demo_c(pause: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo D: DONT_WALK signal
+# Demo D: DON'T WALK
+# Phase B active (N-S vehicles GREEN); CW_NORTH shows DONT_WALK.
+# Pedestrian at CW_NORTH entry must wait for the next Phase A window.
 # ---------------------------------------------------------------------------
 
 def demo_d(pause: bool) -> None:
-    now_ms = 103_000
-    signals = make_all_signals(now_ms, states={"CW_NORTH": "DONT_WALK"})
+    # cycle position t=60000 -> Phase B; CW_NORTH DONT_WALK, CW_EAST & CW_WEST WALK
+    now_ms = 60_000
+    signals = two_phase_signals(now_ms, cycle_start_ms=0)
     loc = preset_near_correct_crosswalk(now_ms)
     result = evaluate(signals, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
     LOGGER.log(result.decision, result.evidence)
     ev = result.evidence
     _narrate(
-        title="DEMO D - DON'T WALK Signal",
+        title="DEMO D - DON'T WALK  [Phase B: N-S vehicles GREEN, CW_NORTH DONT_WALK]",
         story=(
-            "CW_NORTH signal is DONT_WALK (red man).  Even though the pedestrian's\n"
-            "  position, freshness, and health are all valid, the signal predicate Sv\n"
-            "  fails -> SIGNAL_NOT_WALK -> WAIT."
+            "N-S vehicles are now green (Phase B). CW_EAST & CW_WEST are WALK;\n"
+            "  CW_NORTH is DONT_WALK. Pedestrian at CW_NORTH entry must wait for\n"
+            "  Phase A. Signal predicate Sv fails -> SIGNAL_NOT_WALK -> WAIT."
         ),
         inputs={
+            "Signal phase":    "B — N-S vehicles GREEN  (cycle t=60 000 ms)",
             "CW_NORTH signal": "DONT_WALK  age={} ms".format(ev.get("signal_age_ms")),
-            "Pedestrian":      "(5.5, 9.5)  uncertainty=0.75 m",
+            "CW_EAST signal":  "WALK  (E-W crossing open in Phase B)",
+            "Pedestrian":      "(5.5, 9.5)  uncertainty=0.75 m  zone=CW_NORTH entry",
             "System health":   "ALL OK",
         },
         result=result,
@@ -221,111 +252,109 @@ def demo_d(pause: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo E: Journey Replay using four_phase_signals
+# Demo E: Journey Replay – two-phase cycle, Phase B -> Clearance -> Phase A
 #
-# now_ms: 150000 to 175000 (inclusive, 1000 ms steps)
-# Cycle start: 0
+# now_ms: 90 000 to 120 000 (1 000 ms steps, 31 ticks)
+# cycle_start_ms = 0
 #
-# Signal timeline (cycle_start=0, t = now_ms % 160000):
-#   t=150000 to 159000 -> West-arm vehicles green, DONT_WALK   (Stage 1)
-#   t=160000 to 161000 -> Ped interval WALK (30 s left)         (Stage 2)
-#   t=162000 onwards   -> Still WALK, ped moves west            (Stage 3)
-#   x <= -3 (~172600)  -> Ped enters CW_NORTH exit zone         (Stage 4)
+# Timeline (cycle_t = now_ms % TWO_PHASE_CYCLE_MS):
+#   90 000 - 94 999  Phase B  (N-S green)   CW_NORTH: DONT_WALK  -> WAIT
+#   95 000 - 99 999  Clearance B            CW_NORTH: DONT_WALK  -> WAIT
+#  100 000 - 102 999 Phase A starts         CW_NORTH: WALK       -> WALK (ped at curb)
+#  103 000 - 107 000 Phase A, ped walking   CW_NORTH: WALK       -> WALK (in entry zone)
+#  108 000 - 120 000 Ped mid-crossing       CW_NORTH: WALK       -> UNAVAILABLE
 #
-# Pedestrian script (spec §12c):
-#   Stays at (5.5, 9.5) until 161999, then:
-#     x = 5.5 - 0.8 * (now_ms - 162000) / 1000
-#     y = 9.5, heading=180, uncertainty=0.75, age=30 ms
+# Pedestrian script:
+#   Stays at (5.5, 9.5) until t=102 999, then walks west at 0.8 m/s:
+#     x = 5.5 - 0.8 * (now_ms - 103 000) / 1000
+#     y = 9.5, heading=180, uncertainty=0.75 m
 #
-# NOTE: Mid-crossing guidance is NOT defined in Milestone 01.
-# Once the pedestrian leaves the CW_NORTH entry zone (x < 3 approx.) the engine
-# outputs UNAVAILABLE / CROSSWALK_NOT_ESTABLISHED.  This is EXPECTED behaviour;
-# it is listed under "Known limitations / next milestone" in the README.
-# ---------------------------------------------------------------------------
-# Demo E: Journey Replay (Commented out for now)
+# NOTE: mid-crossing guidance is NOT defined in Milestone 01.
+# Once ped leaves the CW_NORTH entry zone (x < 2.25 approx.) the engine
+# outputs UNAVAILABLE / CROSSWALK_NOT_ESTABLISHED — expected behaviour.
 # ---------------------------------------------------------------------------
 
-# def demo_e(pause: bool, slow: bool = False) -> None:
-#     """Journey replay: engine called unchanged every 1000 ms, now_ms 150000 to 175000."""
-#     _sep("=")
-#     print("  DEMO E - JOURNEY REPLAY  (150 000 ms -> 175 000 ms, one tick per 1000 ms)")
-#     print("  Signals from four_phase_signals(cycle_start_ms=0)")
-#     _sep("=")
-# 
-#     # Journey parameters
-#     START_MS = 150_000
-#     END_MS = 175_000
-#     PED_MOVE_START_MS = 162_000   # pedestrian starts walking at this ms
-#     PED_Y = 9.5
-#     PED_SPEED_MPS = 0.8           # m/s westward (decreasing x)
-#     UNCERTAINTY = 0.75
-# 
-#     def _ped_pos(now_ms: int) -> tuple:
-#         if now_ms < PED_MOVE_START_MS:
-#             return 5.5, PED_Y
-#         elapsed_s = (now_ms - PED_MOVE_START_MS) / 1000.0
-#         return 5.5 - PED_SPEED_MPS * elapsed_s, PED_Y
-# 
-#     def _stage(now_ms: int, x: float) -> str:
-#         if now_ms <= 159_000:
-#             return "Stage 1 - West-arm vehicles green, DONT_WALK, ped waiting"
-#         if now_ms <= 161_000:
-#             return "Stage 2 - All vehicles red, WALK (30 s remaining), ped at curb"
-#         if x > -3.0:
-#             return "Stage 3 - Ped walking west (mid-crossing: UNAVAILABLE expected once off entry)"
-#         return "Stage 4 - Ped in CW_NORTH exit zone / beyond (UNAVAILABLE expected)"
-# 
-#     prev_stage = ""
-#     tick_count = 0
-#     decision_counts: dict = {}
-#     false_walks = 0
-# 
-#     for now_ms in range(START_MS, END_MS + 1, 1000):
-#         sigs = four_phase_signals(now_ms, cycle_start_ms=0)
-#         x, y = _ped_pos(now_ms)
-#         loc = make_localization(x, y, now_ms, age_ms=30, heading_deg=180.0)
-#         result = evaluate(sigs, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
-#         LOGGER.log(result.decision, result.evidence)
-# 
-#         d = result.decision
-#         ev = result.evidence
-#         decision_counts[d.decision] = decision_counts.get(d.decision, 0) + 1
-#         tick_count += 1
-# 
-#         if d.decision == "WALK":
-#             if not (ev["Sv"] and ev["Cv"] and ev["Lv"] and ev["Fv"] and ev["Hv"] and ev["Tv"]):
-#                 false_walks += 1
-# 
-#         stage = _stage(now_ms, x)
-#         if stage != prev_stage:
-#             _sep("-")
-#             print("  >>  " + stage)
-#             _sep("-")
-#             prev_stage = stage
-# 
-#         print(
-#             "  t={:7d}  x={:6.2f}  y={:5.2f}  sig={:<10}  rem={:<7}  -> {:<12}  {}".format(
-#                 now_ms, x, y,
-#                 sigs["CW_NORTH"].signal_state,
-#                 str(sigs["CW_NORTH"].remaining_time_ms),
-#                 d.decision, d.reason_codes[0],
-#             )
-#         )
-# 
-#         if slow:
-#             time.sleep(0.2)
-# 
-#     _sep("=")
-#     print("  JOURNEY REPLAY SUMMARY")
-#     _sep("-")
-#     print("  Total ticks : {}".format(tick_count))
-#     for dec, cnt in sorted(decision_counts.items()):
-#         print("  {:<12}: {}".format(dec, cnt))
-#     print("  False WALK events: {}  <- must be 0".format(false_walks))
-#     _sep("=")
-#     print()
-#     if pause:
-#         _pause(pause)
+def demo_e(pause: bool, slow: bool = False) -> None:
+    """Journey replay: two-phase cycle crossing the Phase B -> Phase A boundary."""
+    _sep("=")
+    print("  DEMO E - JOURNEY REPLAY  (two-phase cycle, 90 000 ms -> 120 000 ms)")
+    print("  Phase B (N-S green) -> Clearance B -> Phase A (E-W green) -> Ped walks")
+    _sep("=")
+
+    START_MS        = 90_000
+    END_MS          = 120_000
+    PED_MOVE_START  = 103_000   # ped starts walking 3 s after Phase A begins
+    PED_Y           = 9.5
+    PED_SPEED_MPS   = 0.8       # m/s westward (decreasing x)
+
+    def _ped_pos(now_ms: int) -> tuple:
+        if now_ms < PED_MOVE_START:
+            return 5.5, PED_Y
+        elapsed_s = (now_ms - PED_MOVE_START) / 1000.0
+        return 5.5 - PED_SPEED_MPS * elapsed_s, PED_Y
+
+    def _stage(now_ms: int) -> str:
+        ct = now_ms % TWO_PHASE_CYCLE_MS
+        if ct >= 95_000:
+            return "Clearance B — CW_NORTH DONT_WALK, ped waiting at curb"
+        if ct >= 50_000:
+            return "Phase B — N-S vehicles GREEN, CW_NORTH DONT_WALK, ped waiting"
+        if now_ms < PED_MOVE_START:
+            return "Phase A — E-W vehicles GREEN, CW_NORTH WALK, ped at curb"
+        return "Phase A — CW_NORTH WALK, ped walking west (UNAVAILABLE once off entry zone)"
+
+    prev_stage = ""
+    tick_count = 0
+    decision_counts: dict = {}
+    false_walks = 0
+
+    for now_ms in range(START_MS, END_MS + 1, 1_000):
+        sigs = two_phase_signals(now_ms, cycle_start_ms=0)
+        x, y = _ped_pos(now_ms)
+        loc = make_localization(x, y, now_ms, age_ms=30, heading_deg=180.0)
+        result = evaluate(sigs, CMAP, loc, GOOD_HEALTH, now_ms, config=CFG)
+        LOGGER.log(result.decision, result.evidence)
+
+        d = result.decision
+        ev = result.evidence
+        decision_counts[d.decision] = decision_counts.get(d.decision, 0) + 1
+        tick_count += 1
+
+        if d.decision == "WALK":
+            if not (ev["Sv"] and ev["Cv"] and ev["Lv"] and ev["Fv"] and ev["Hv"] and ev["Tv"]):
+                false_walks += 1
+
+        stage = _stage(now_ms)
+        if stage != prev_stage:
+            _sep("-")
+            print("  >>  " + stage)
+            _sep("-")
+            prev_stage = stage
+
+        cycle_t = now_ms % TWO_PHASE_CYCLE_MS
+        print(
+            "  t={:7d}  ct={:6d}  x={:6.2f}  sig={:<10}  rem={:<7}  -> {:<12}  {}".format(
+                now_ms, cycle_t, x,
+                sigs["CW_NORTH"].signal_state,
+                str(sigs["CW_NORTH"].remaining_time_ms),
+                d.decision, d.reason_codes[0],
+            )
+        )
+
+        if slow:
+            time.sleep(0.2)
+
+    _sep("=")
+    print("  JOURNEY REPLAY SUMMARY")
+    _sep("-")
+    print("  Total ticks : {}".format(tick_count))
+    for dec, cnt in sorted(decision_counts.items()):
+        print("  {:<12}: {}".format(dec, cnt))
+    print("  False WALK events: {}  <- must be 0".format(false_walks))
+    _sep("=")
+    print()
+    if pause:
+        _pause(pause)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +371,8 @@ def main() -> None:
 
     print()
     print("  TRIVENI Core Guidance & Safety Emulator v0.1 - Milestone 01")
-    print("  Demos A-D")
+    print("  Signal model: two-phase India-style (peds parallel to green vehicle arm)")
+    print("  Demos A-E")
     print()
 
     demo_a(args.pause)

@@ -25,37 +25,32 @@ Only the **pedestrian signal** of each crosswalk is used.
 Nothing here is connected to a real signal controller.
 WALK alone does NOT mean "cross" - all six safety predicates must hold.
 
-Four-Phase Signal Cycle (four_phase_signals)
---------------------------------------------
-One-arm-at-a-time plan: only one vehicle arm moves at a time.
-When any vehicle arm is green, all pedestrian crossings show DONT_WALK.
-Pedestrian WALK and CLEARANCE are given only while ALL vehicles are red.
+Two-Phase Signal Cycle (two_phase_signals) — India Style
+---------------------------------------------------------
+No separate pedestrian-only phase.  Pedestrians walk PARALLEL to (and
+simultaneously with) the green vehicle arm.  This matches many Indian
+urban intersections where left turns use a free-left slip road.
 
-CYCLE_MS = PED_WALK_MS + PED_CLEARANCE_MS + PED_BUFFER_MS
-         + 4 * VEHICLE_GREEN_MS = 160 000 ms
+Phase A  E-W vehicles GREEN  →  CW_NORTH & CW_SOUTH: WALK
+                                 (peds cross the N-S road, moving East↔West)
+Phase B  N-S vehicles GREEN  →  CW_EAST  & CW_WEST:  WALK
+                                 (peds cross the E-W road, moving North↔South)
 
-    t in cycle      Phase                  Pedestrian signal  Vehicle phase
-    --------------- ---------------------- -----------------  -----------------
-    0 - 29 999      Pedestrian WALK        WALK               All vehicles RED
-    30 000 - 39 999 Pedestrian CLEARANCE   CLEARANCE          All vehicles RED
-    40 000 - 69 999 North-arm vehicles     DONT_WALK          North GREEN
-    70 000 - 99 999 East-arm vehicles      DONT_WALK          East GREEN
-    100 000-129 999 South-arm vehicles     DONT_WALK          South GREEN
-    130 000-159 999 West-arm vehicles      DONT_WALK          West GREEN
+TWO_PHASE_CYCLE_MS = TWO_PHASE_EW_GREEN_MS + TWO_PHASE_CLEARANCE_A_MS
+                   + TWO_PHASE_NS_GREEN_MS + TWO_PHASE_CLEARANCE_B_MS
+                   = 100 000 ms
+
+    t in cycle       Phase          CW_NORTH  CW_SOUTH  CW_EAST  CW_WEST
+    ---------------- -------------- --------  --------  -------  -------
+    0     - 44 999   Phase A E-W ↔  WALK      WALK      DONT_W   DONT_W
+    45 000- 49 999   Clearance A    CLEARANCE CLEARANCE DONT_W   DONT_W
+    50 000- 94 999   Phase B N-S ↕  DONT_W    DONT_W    WALK     WALK
+    95 000- 99 999   Clearance B    DONT_W    DONT_W    CLEARANC CLEARANC
 
 remaining_time_ms:
-    WALK      -> ms left in the WALK sub-phase
-    CLEARANCE -> ms left in the CLEARANCE sub-phase
-    DONT_WALK -> ms until the next WALK phase begins
-
-Examples with cycle_start_ms=0:
-    now_ms=10000 -> WALK,      remaining=20000
-    now_ms=35000 -> CLEARANCE, remaining=5000
-    now_ms=50000 -> DONT_WALK (north arm green), remaining=110000
-
-Vehicle phases appear only in comments/docstrings.
-The SignalState model carries only the pedestrian signal.
-The safety engine never reads vehicle signals.
+    WALK      -> ms left in the current WALK phase for this crosswalk
+    CLEARANCE -> ms left in the CLEARANCE phase for this crosswalk
+    DONT_WALK -> ms until the next WALK phase begins for this crosswalk
 
 All simulators are deterministic: no wall-clock, no time.time(), no sleep,
 no threads.  Everything is computed purely from the now_ms argument.
@@ -71,15 +66,20 @@ INTERSECTION_ID = "INT_KEMPS_CORNER"
 CROSSWALK_IDS = ["CW_NORTH", "CW_EAST", "CW_SOUTH", "CW_WEST"]
 
 # ---------------------------------------------------------------------------
-# Four-phase cycle constants (named so tests and demos can reference them)
+# Two-phase cycle constants — India-style (no separate pedestrian phase)
 # ---------------------------------------------------------------------------
-VEHICLE_GREEN_MS: int = 30_000   # duration of each vehicle-arm green phase
-PED_WALK_MS: int = 30_000        # pedestrian WALK sub-phase duration
-PED_CLEARANCE_MS: int = 10_000   # pedestrian CLEARANCE sub-phase duration
-PED_BUFFER_MS: int = 0           # optional all-red buffer after CLEARANCE
-CYCLE_MS: int = (
-    PED_WALK_MS + PED_CLEARANCE_MS + PED_BUFFER_MS + 4 * VEHICLE_GREEN_MS
-)  # = 160 000 ms
+TWO_PHASE_EW_GREEN_MS: int = 45_000    # Phase A: E-W vehicles green; CW_NORTH & CW_SOUTH WALK
+TWO_PHASE_CLEARANCE_A_MS: int = 5_000  # Clearance after Phase A
+TWO_PHASE_NS_GREEN_MS: int = 45_000    # Phase B: N-S vehicles green; CW_EAST  & CW_WEST  WALK
+TWO_PHASE_CLEARANCE_B_MS: int = 5_000  # Clearance after Phase B
+TWO_PHASE_CYCLE_MS: int = (
+    TWO_PHASE_EW_GREEN_MS + TWO_PHASE_CLEARANCE_A_MS
+    + TWO_PHASE_NS_GREEN_MS + TWO_PHASE_CLEARANCE_B_MS
+)  # = 100 000 ms
+
+# Crosswalks whose pedestrians WALK in each vehicle phase
+_TWO_PHASE_A_WALK = frozenset({"CW_NORTH", "CW_SOUTH"})  # E-W GREEN → peds cross E↔W
+_TWO_PHASE_B_WALK = frozenset({"CW_EAST",  "CW_WEST" })  # N-S GREEN → peds cross N↔S
 
 
 # ---------------------------------------------------------------------------
@@ -230,76 +230,104 @@ def make_all_signals(
 
 
 # ---------------------------------------------------------------------------
-# Four-phase coordinated signal simulation
+# Two-phase coordinated signal simulation (India style)
 # ---------------------------------------------------------------------------
 
-def four_phase_signals(
+def two_phase_signals(
     now_ms: int,
     cycle_start_ms: int = 0,
 ) -> Dict[str, SignalState]:
-    """Return all four per-crosswalk SignalStates for one tick of the four-phase cycle.
+    """Return all four per-crosswalk SignalStates for one tick of the two-phase cycle.
 
-    The cycle is deterministic and stateless: same now_ms always gives the same output.
-    No wall-clock, no time.time(), no sleep, no threads.
+    India-style two-phase signal: pedestrians walk PARALLEL to (and at the same
+    time as) the green vehicle phase.  No separate all-red pedestrian phase.
+    This matches intersections where left turns use a free-left slip road.
 
-    Cycle structure (see module docstring for the full table):
-        Phase 1 - Pedestrian WALK      (0 to PED_WALK_MS - 1)
-        Phase 2 - Pedestrian CLEARANCE (PED_WALK_MS to PED_WALK_MS+PED_CLEARANCE_MS-1)
-        Phase 3 - Pedestrian BUFFER    (if PED_BUFFER_MS > 0; default 0)
-        Phase 4 - North arm green      (VEHICLE_GREEN_MS)
-        Phase 5 - East arm green       (VEHICLE_GREEN_MS)
-        Phase 6 - South arm green      (VEHICLE_GREEN_MS)
-        Phase 7 - West arm green       (VEHICLE_GREEN_MS)
+    Phase A  (t = 0 … TWO_PHASE_EW_GREEN_MS-1)
+        E-W vehicles GREEN.
+        CW_NORTH & CW_SOUTH → WALK  (peds cross E↔W, parallel to E-W vehicles)
+        CW_EAST  & CW_WEST  → DONT_WALK
+
+    Clearance A  (t = TWO_PHASE_EW_GREEN_MS … +TWO_PHASE_CLEARANCE_A_MS-1)
+        CW_NORTH & CW_SOUTH → CLEARANCE
+        CW_EAST  & CW_WEST  → DONT_WALK
+
+    Phase B  (t = 50 000 … +TWO_PHASE_NS_GREEN_MS-1)
+        N-S vehicles GREEN.
+        CW_EAST  & CW_WEST  → WALK  (peds cross N↔S, parallel to N-S vehicles)
+        CW_NORTH & CW_SOUTH → DONT_WALK
+
+    Clearance B  (t = 95 000 … TWO_PHASE_CYCLE_MS-1)
+        CW_EAST  & CW_WEST  → CLEARANCE
+        CW_NORTH & CW_SOUTH → DONT_WALK
+
+    remaining_time_ms semantics
+    ---------------------------
+    WALK      : ms left in this crosswalk's current WALK window.
+    CLEARANCE : ms left in this crosswalk's CLEARANCE window.
+    DONT_WALK : ms until this crosswalk's NEXT WALK window begins.
 
     Parameters
     ----------
     now_ms          : current simulated time in ms
-    cycle_start_ms  : when the current cycle started (default 0)
+    cycle_start_ms  : epoch-ms when the current cycle started (default 0)
 
     Returns
     -------
     Dict mapping crosswalk_id -> SignalState for all four crosswalks.
     """
-    # Position within the current cycle
-    t = (now_ms - cycle_start_ms) % CYCLE_MS
+    t = (now_ms - cycle_start_ms) % TWO_PHASE_CYCLE_MS
 
-    # Phase boundaries
-    _walk_end = PED_WALK_MS                                    # 30 000
-    _clear_end = _walk_end + PED_CLEARANCE_MS                  # 40 000
-    _buffer_end = _clear_end + PED_BUFFER_MS                   # 40 000 (buffer=0)
-    # Vehicle arms: N then E then S then W
-    _n_end = _buffer_end + VEHICLE_GREEN_MS                    # 70 000
-    _e_end = _n_end + VEHICLE_GREEN_MS                         # 100 000
-    _s_end = _e_end + VEHICLE_GREEN_MS                         # 130 000
-    # _w_end = _s_end + VEHICLE_GREEN_MS = CYCLE_MS            # 160 000
+    # Cumulative phase boundary offsets
+    _a_end     = TWO_PHASE_EW_GREEN_MS                          # 45 000
+    _a_clr_end = _a_end + TWO_PHASE_CLEARANCE_A_MS              # 50 000
+    _b_end     = _a_clr_end + TWO_PHASE_NS_GREEN_MS             # 95 000
+    # _b_clr_end = TWO_PHASE_CYCLE_MS                           # 100 000
 
-    # Determine pedestrian signal state and remaining_time_ms
-    if t < _walk_end:
-        # Pedestrian WALK - all vehicles RED
-        state = "WALK"
-        remaining = _walk_end - t                              # ms left in WALK
-
-    elif t < _clear_end:
-        # Pedestrian CLEARANCE - all vehicles still RED
-        state = "CLEARANCE"
-        remaining = _clear_end - t                             # ms left in CLEARANCE
-
-    elif t < _buffer_end:
-        # Pedestrian BUFFER (all-red; DONT_WALK) - only active if PED_BUFFER_MS > 0
-        state = "DONT_WALK"
-        remaining = CYCLE_MS - t                               # ms until next WALK
-
-    else:
-        # Vehicle phase: N, E, S, or W arm green - pedestrian DONT_WALK
-        # (Vehicle phases are named in comments only; engine never reads them)
-        state = "DONT_WALK"
-        remaining = CYCLE_MS - t                               # ms until next WALK
-
-    src_ts = now_ms - 50
+    src_ts     = now_ms - 50
     receive_ts = now_ms - 10
 
     result: Dict[str, SignalState] = {}
+
     for cw_id in CROSSWALK_IDS:
+        is_phase_a_cw = cw_id in _TWO_PHASE_A_WALK  # True for CW_NORTH, CW_SOUTH
+
+        if t < _a_end:
+            # ── Phase A: E-W vehicles GREEN ────────────────────────────────
+            if is_phase_a_cw:
+                state     = "WALK"
+                remaining = _a_end - t            # ms left in Phase A WALK
+            else:
+                state     = "DONT_WALK"
+                remaining = _a_clr_end - t        # ms until Phase B WALK starts
+
+        elif t < _a_clr_end:
+            # ── Clearance A ────────────────────────────────────────────────
+            if is_phase_a_cw:
+                state     = "CLEARANCE"
+                remaining = _a_clr_end - t        # ms left in clearance
+            else:
+                state     = "DONT_WALK"
+                remaining = _a_clr_end - t        # Phase B starts right after
+
+        elif t < _b_end:
+            # ── Phase B: N-S vehicles GREEN ────────────────────────────────
+            if is_phase_a_cw:
+                state     = "DONT_WALK"
+                remaining = TWO_PHASE_CYCLE_MS - t  # ms until next Phase A (cycle wrap)
+            else:
+                state     = "WALK"
+                remaining = _b_end - t            # ms left in Phase B WALK
+
+        else:
+            # ── Clearance B ────────────────────────────────────────────────
+            if is_phase_a_cw:
+                state     = "DONT_WALK"
+                remaining = TWO_PHASE_CYCLE_MS - t  # Phase A starts at next cycle
+            else:
+                state     = "CLEARANCE"
+                remaining = TWO_PHASE_CYCLE_MS - t  # ms left in clearance
+
         result[cw_id] = SignalState(
             intersection_id=INTERSECTION_ID,
             crosswalk_id=cw_id,
@@ -309,4 +337,5 @@ def four_phase_signals(
             receive_timestamp_ms=receive_ts,
             source_health="OK",
         )
+
     return result
