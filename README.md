@@ -24,11 +24,12 @@ The output is exactly **one** of `WALK | WAIT | UNAVAILABLE | FAULT`, plus one o
 7. [Demo intersection: Kemps Corner](#demo-intersection-kemps-corner)
 8. [Demos](#demos)
 9. [Interactive query tool](#interactive-query-tool)
-10. [Tests](#tests)
-11. [Decision log](#decision-log)
-12. [Reason codes](#reason-codes)
-13. [Known limitations and assumptions](#known-limitations-and-assumptions)
-<!--14. [Out of scope for Milestone 01](#out-of-scope-for-milestone-01) -->
+10. [Visual UI](#visual-ui)
+11. [Tests](#tests)
+12. [Decision log](#decision-log)
+13. [Reason codes](#reason-codes)
+14. [Known limitations and assumptions](#known-limitations-and-assumptions)
+<!--15. [Out of scope for Milestone 01](#out-of-scope-for-milestone-01) -->
 
 ---
 
@@ -58,6 +59,9 @@ python -m pytest tests/test_safety_engine.py -v
 python triveni_query.py
 # or start at a specific signal phase time
 python triveni_query.py --time 60000
+
+# 6. Run the visual UI (opens http://127.0.0.1:8000 in your browser)
+python ui_server.py
 ```
 
 ---
@@ -94,6 +98,7 @@ flowchart LR
     E --> D["WALK / WAIT / UNAVAILABLE / FAULT"]
     D --> LOG[Structured event log .jsonl]
     D --> Q[triveni_query.py – Interactive CLI]
+    D --> UI[ui_server.py – Visual UI]
 ```
 <!--
 Future technologies connect through adapters that convert real data into these same internal objects:
@@ -194,12 +199,16 @@ triveni/
 ├── conftest.py
 ├── run_demo.py                      # runs the demo scenarios (A–D)
 ├── triveni_query.py                 # interactive CLI query tool
+├── ui_server.py                     # visual UI server (standard-library HTTP)
+├── ui/
+│   └── index.html                   # visual UI page
 ├── config/
 │   └── triveni.yaml                 # all safety thresholds
 ├── data/
 │   └── intersection_demo.json       # Kemps Corner intersection map
 ├── logs/
-│   └── decision_log.jsonl           # auto-generated decision log
+│   ├── decision_log.jsonl           # auto-generated decision log
+│   └── ui_decision_log.jsonl        # decision log written by the visual UI
 ├── triveni/
 │   ├── models/
 │   │   ├── signal_state.py
@@ -379,6 +388,40 @@ Query: CW_SOUTH_EXIT to CW_EAST_ENTRY
 ### Road-zone rejection
 
 Coordinates inside the vehicle road area (`|x| < 7.5 AND |y| < 7.5`) are **rejected** — TRIVENI will not evaluate them and will suggest the nearest safe sidewalk position instead.
+
+---
+
+## Visual UI
+
+`ui_server.py` serves a browser-based safety emulator on top of the same backend. It does not re-implement any safety logic: every decision comes from `safety_engine.evaluate()`, inputs are built with the existing simulators, and routing reuses `triveni_query.py`. It uses only the Python standard library plus PyYAML, so no extra installs are needed.
+
+From the `triveni/` folder, with the virtual environment active:
+
+```bash
+# Start the UI and open http://127.0.0.1:8000 in your browser
+python ui_server.py
+
+# Use a different port
+python ui_server.py --port 8080
+
+# Start the server without opening a browser
+python ui_server.py --no-browser
+```
+
+Press `Ctrl+C` in the terminal to stop the server.
+
+### What you can do in the UI
+
+- **Intersection:** see the Kemps Corner map, crosswalk zones and the pedestrian's uncertainty circle.
+- **Signal cycle:** watch the two-phase signal timeline and the current phase.
+- **Journey:** enter a source and destination (named location such as `NE` or `CW_NORTH_FAR`, or `x y`), or click **Pick on map**, then use **Start / Pause / Reset** to step through the route.
+- **Safety engine at current position:** see the live `WALK / WAIT / UNAVAILABLE / FAULT` decision, reason codes and evidence. Use the tabs to override inputs:
+  - **Signals:** force each crosswalk to `WALK`, `DONT_WALK`, `CLEARANCE` or missing; change signal age, remaining time and health.
+  - **Localization:** change position, uncertainty, age and health, or remove localization.
+  - **System health:** set each component to `OK`, `DEGRADED` or `FAULT`.
+  - **Thresholds:** adjust the `triveni.yaml` values for the session; **Reset to triveni.yaml** restores them.
+
+Every UI decision is logged to `logs/ui_decision_log.jsonl`. This file is overwritten each time the server starts.
 
 ---
 
