@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRIVENI Safety Emulator</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b24; --panel-2: #1b2330; --line: #273142;
+    --text: #e6edf3; --muted: #8b98a9; --faint: #5b6778;
+    --walk: #22c55e; --wait: #f59e0b; --unavail: #94a3b8; --fault: #ef4444; --accent: #38bdf8;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  .mono { font-family: var(--mono); }
+
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .04em; }
+  header h1 b { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); }
+
+  main { display: grid; grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr);
+    gap: 16px; padding: 16px 20px 24px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .card > h2 { margin: 0; padding: 10px 14px; font-size: 12px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .card > h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .body { padding: 12px 14px; }
+
+  /* map */
+  #map { width: 100%; height: auto; display: block; aspect-ratio: 1 / 1; max-height: 660px;
+    touch-action: none; user-select: none; }
+  #map.picking { cursor: crosshair; }
+  .map-foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    padding: 8px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 12px; height: 10px; margin-right: 5px; vertical-align: -1px; border-radius: 2px; }
+
+  /* timeline */
+  .tl { position: relative; height: 30px; border-radius: 6px; overflow: hidden; display: flex; border: 1px solid var(--line); }
+  .tl > div { height: 100%; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; }
+  .tl .head { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; }
+  .tl-scale { display: flex; justify-content: space-between; color: var(--faint); font-size: 11px; font-family: var(--mono); margin-top: 4px; }
+
+  .btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 7px 14px; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: #3a4860; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); color: #04121c; border-color: var(--accent); font-weight: 600; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .btn.on { border-color: var(--accent); color: var(--accent); }
+  input[type=number], input[type=text], select {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  input[type=number] { width: 90px; font-family: var(--mono); }
+  input[type=text] { font-family: var(--mono); }
+  input[type=range], input[type=checkbox] { accent-color: var(--accent); }
+
+  /* route */
+  .route-grid { display: grid; grid-template-columns: 100px 1fr auto; gap: 10px; align-items: center; }
+  .route-grid label { color: var(--muted); font-size: 13px; }
+  .route-grid input[type=text] { width: 100%; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  .actions .grow { flex: 1; }
+  .hint { color: var(--faint); font-size: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips button { background: none; border: 1px dashed var(--line); border-radius: 999px; padding: 2px 9px;
+    font-size: 11px; font-family: var(--mono); color: var(--muted); cursor: pointer; }
+  .chips button:hover { color: var(--text); border-color: #3a4860; }
+  .msg { margin-top: 12px; font-size: 13px; padding: 8px 12px; border-radius: 6px; }
+  .msg.err { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.4); color: #fecaca; }
+  .msg.warn { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.4); color: #fde68a; }
+  .msg.ok { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.4); color: #bbf7d0; }
+
+  .steps { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .steps li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 13px; color: var(--muted); }
+  .steps li .ic { text-align: center; font-family: var(--mono); }
+  .steps li.done { color: var(--faint); }
+  .steps li.done .ic { color: var(--walk); }
+  .steps li.cur { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+  .steps li.cur .ic { color: var(--accent); }
+  .steps li.blocked { color: #fca5a5; }
+
+  /* decision */
+  .decision { padding: 18px; border-radius: 10px; border: 1px solid var(--line);
+    display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; align-items: center; transition: background-color .2s, border-color .2s; }
+  .decision .state { grid-row: span 2; font-size: 32px; font-weight: 800; letter-spacing: .04em;
+    padding: 10px 18px; border-radius: 8px; color: #0b0f14; min-width: 200px; text-align: center; background: var(--panel-2); }
+  .decision .cue { font-size: 18px; font-weight: 600; }
+  .decision .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .decision .reasons { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .reason { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .reason code { font-family: var(--mono); font-size: 12px; padding: 1px 7px; border-radius: 4px;
+    background: rgba(255,255,255,.07); border: 1px solid var(--line); white-space: nowrap; }
+  .reason span { color: var(--muted); }
+  .note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); border-left: 3px solid var(--accent);
+    padding: 4px 10px; background: rgba(56,189,248,.06); }
+  .d-WALK { background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.45); } .d-WALK .state { background: var(--walk); }
+  .d-WAIT { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.45); } .d-WAIT .state { background: var(--wait); }
+  .d-UNAVAILABLE { background: rgba(148,163,184,.07); border-color: rgba(148,163,184,.4); } .d-UNAVAILABLE .state { background: var(--unavail); }
+  .d-FAULT { background: rgba(239,68,68,.09); border-color: rgba(239,68,68,.5); } .d-FAULT .state { background: var(--fault); color: #fff; }
+  .d-GO, .d-CROSSING { background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.45); }
+  .d-GO .state, .d-CROSSING .state { background: var(--walk); }
+  .d-WALKING .state, .d-ARRIVED .state { background: var(--accent); }
+  @media (max-width: 560px) { .decision { grid-template-columns: 1fr; } .decision .state { grid-row: auto; min-width: 0; } }
+  .eng { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; margin-bottom: 12px; }
+  .eng .reasons { display: flex; flex-direction: column; gap: 4px; }
+  .badge { font-weight: 800; font-size: 14px; letter-spacing: .04em; padding: 4px 12px; border-radius: 6px;
+    color: #0b0f14; background: var(--panel-2); text-align: center; }
+  .b-WALK { background: var(--walk); } .b-WAIT { background: var(--wait); }
+  .b-UNAVAILABLE { background: var(--unavail); } .b-FAULT { background: var(--fault); color: #fff; }
+
+  /* predicates */
+  .preds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 560px) { .preds { grid-template-columns: 1fr; } }
+  .pred { display: grid; grid-template-columns: 34px 1fr auto; gap: 2px 10px; align-items: center;
+    padding: 8px 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+  .pred .sym { grid-row: span 2; font-family: var(--mono); font-weight: 700; font-size: 15px; text-align: center; color: var(--muted); }
+  .pred .sym sub { font-size: 10px; }
+  .pred .name { font-size: 13px; }
+  .pred .val { grid-column: 2 / 4; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; letter-spacing: .04em; }
+  .chip.pass { background: rgba(34,197,94,.15); color: var(--walk); }
+  .chip.fail { background: rgba(239,68,68,.15); color: #f87171; }
+  .pred.fail { border-color: rgba(239,68,68,.35); }
+  .formula { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  /* tabs / forms */
+  .tabs { display: flex; gap: 2px; padding: 6px 6px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .tab { background: none; border: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .form { display: grid; grid-template-columns: 190px 1fr; gap: 9px 12px; align-items: center; }
+  .form label { color: var(--muted); font-size: 13px; }
+  .form .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .sigtable select, .sigtable input[type=number] { width: 100%; min-width: 70px; }
+  .scroll-x { overflow-x: auto; }
+
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    background: #3b1218; border: 1px solid var(--fault); color: #fecaca; padding: 10px 16px;
+    border-radius: 8px; max-width: min(640px, calc(100% - 32px)); font-size: 13px; z-index: 10; }
+  @keyframes blink { 50% { opacity: .35; } }
+  .blink { animation: blink 1s steps(1) infinite; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><b>TRIVENI</b> · Core Guidance &amp; Safety Emulator v0.1</h1>
+  <span class="sub" id="intName">—</span>
+  <span class="spacer"></span>
+  <label class="pill" title="Speak guidance cues aloud when they change"><input type="checkbox" id="speak"> Audio cues</label>
+</header>
+
+<main>
+  <!-- ================= LEFT ================= -->
+  <section class="col">
+    <div class="card">
+      <h2>Intersection <span class="right mono" id="cursor"></span></h2>
+      <svg id="map" viewBox="-15 -15 30 30" aria-label="Intersection map"></svg>
+      <div class="map-foot">
+        <div class="legend">
+          <span><i style="background:rgba(34,197,94,.35);border:1px solid #22c55e"></i>entry zone</span>
+          <span><i style="background:rgba(148,163,184,.15);border:1px dashed #94a3b8"></i>exit zone</span>
+          <span><i style="background:rgba(56,189,248,.3);border:1px solid #38bdf8"></i>pedestrian ± uncertainty</span>
+        </div>
+        <span class="mono">origin = centre · +x East · +y North · metres</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Signal cycle (two-phase) <span class="right mono" id="phaseLabel">—</span></h2>
+      <div class="body">
+        <div class="tl" id="timeline"><div class="head" id="playhead"></div></div>
+        <div class="tl-scale"><span>0s</span><span>25s</span><span>50s</span><span>75s</span><span>100s</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RIGHT ================= -->
+  <section class="col">
+    <div class="card">
+      <h2>Journey</h2>
+      <div class="body">
+        <div class="route-grid">
+          <label for="src">Source</label>
+          <input type="text" id="src" value="CW_NORTH" list="locs" autocomplete="off">
+          <button class="btn small" id="pickSrc" title="Click a point on the map">Pick on map</button>
+          <label for="dst">Destination</label>
+          <input type="text" id="dst" value="CW_NORTH_FAR" list="locs" autocomplete="off">
+          <button class="btn small" id="pickDst" title="Click a point on the map">Pick on map</button>
+          <label for="startT">Start time</label>
+          <div class="row" style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="startT" value="60000" step="1000" min="0"><span class="hint">ms in signal cycle</span></div>
+          <span></span>
+          <label for="walkSpeed">Walk speed</label>
+          <div class="row" style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="walkSpeed" value="1.0" step="0.1" min="0.1" style="width:70px"><span class="hint">m/s</span></div>
+          <span></span>
+        </div>
+        <datalist id="locs"></datalist>
+        <div class="chips" id="chips"></div>
+        <div class="actions">
+          <button class="btn primary" id="startBtn">▶ Start</button>
+          <button class="btn" id="pauseBtn" disabled>❚❚ Pause</button>
+          <button class="btn" id="resetBtn">↺ Reset</button>
+          <span class="grow"></span>
+          <span class="mono hint" id="clock"></span>
+        </div>
+        <div id="routeMsg"></div>
+        <ol class="steps" id="steps"></ol>
+      </div>
+    </div>
+
+    <div class="decision" id="guide">
+      <div class="state" id="gState">—</div>
+      <div class="cue" id="gCue">Enter a source and destination, then press Start.</div>
+      <div class="meta" id="gMeta"></div>
+    </div>
+
+    <div class="card">
+      <h2>Safety engine at current position <span class="right hint">evaluate() · WALK only if all six hold</span></h2>
+      <div class="body">
+        <div class="eng" id="decision">
+          <span class="badge" id="dState">—</span>
+          <div class="reasons" id="dReasons"></div>
+        </div>
+        <div class="preds" id="preds"></div>
+        <div class="formula">WALK = S<sub>v</sub> ∧ C<sub>v</sub> ∧ L<sub>v</sub> ∧ F<sub>v</sub> ∧ H<sub>v</sub> ∧ T<sub>v</sub>
+          &nbsp;·&nbsp; priority FAULT &gt; UNAVAILABLE &gt; WAIT &gt; WALK</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="sig">Signals</button>
+        <button class="tab" data-tab="ped">Localization</button>
+        <button class="tab" data-tab="health">System health</button>
+        <button class="tab" data-tab="cfg">Thresholds</button>
+      </div>
+      <div class="pane body" id="pane-sig">
+        <div class="scroll-x">
+          <table class="sigtable">
+            <thead><tr><th>Crosswalk</th><th>Live</th><th>Mode</th><th>Age ms</th><th>Remaining ms</th><th>Health</th><th title="Report a wrong intersection ID">Wrong int.</th></tr></thead>
+            <tbody id="sigRows"></tbody>
+          </table>
+        </div>
+        <p class="hint">These conditions feed the <b>safety engine</b> card. The journey itself follows <span class="mono">triveni_query._phase_timing()</span>, as the CLI does. Mode <b>Auto</b> follows <span class="mono">two_phase_signals()</span>. Age above the freshness threshold = stale; negative age = contradictory timestamp. Leave “Remaining” blank to use the simulator’s value; tick “none” to omit it.</p>
+      </div>
+      <div class="pane body" id="pane-ped" hidden>
+        <div class="form">
+          <label>Localization present</label><div class="row"><input type="checkbox" id="locPresent" checked></div>
+          <label>Uncertainty (m)</label>
+          <div class="row"><input type="range" id="locUncRange" min="0" max="3" step="0.05" style="flex:1"><input type="number" id="locUnc" step="0.05"></div>
+          <label>Age (ms)</label><div class="row"><input type="number" id="locAge" step="50"></div>
+          <label>Health</label><div class="row"><select id="locHealth"><option>OK</option><option>DEGRADED</option><option>FAULT</option></select></div>
+          <label>Wrong intersection ID</label><div class="row"><input type="checkbox" id="locWrongInt"></div>
+        </div>
+      </div>
+      <div class="pane body" id="pane-health" hidden>
+        <div class="form" id="healthForm">
+          <label>SystemHealth present</label><div class="row"><input type="checkbox" id="hPresent" checked></div>
+        </div>
+      </div>
+      <div class="pane body" id="pane-cfg" hidden>
+        <div class="form">
+          <label>signal_freshness_ms</label><div class="row"><input type="number" id="c_signal_freshness_ms" step="50"></div>
+          <label>localization_freshness_ms</label><div class="row"><input type="number" id="c_localization_freshness_ms" step="50"></div>
+          <label>max_position_uncertainty_m</label><div class="row"><input type="number" id="c_max_position_uncertainty_m" step="0.1"></div>
+          <label>minimum_remaining_walk_time_ms</label><div class="row"><input type="number" id="c_minimum_remaining_walk_time_ms" step="500"></div>
+          <label>wrong_intersection_result</label><div class="row"><select id="c_wrong_intersection_result"><option>UNAVAILABLE</option><option>FAULT</option></select></div>
+          <label>require_remaining_time</label><div class="row"><input type="checkbox" id="c_require_remaining_time"></div>
+        </div>
+        <div class="actions"><button class="btn small" id="cfgReset">Reset to triveni.yaml</button>
+          <span class="hint">Session only; the YAML file is not changed.</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" hidden></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+const REASON = {
+  ALL_REQUIRED_CONDITIONS_VALID: "All six mandatory safety predicates hold",
+  SIGNAL_NOT_WALK: "Pedestrian signal does not permit crossing",
+  SIGNAL_MISSING: "No signal data for the established crosswalk",
+  SIGNAL_STALE: "Signal data older than the freshness threshold",
+  SIGNAL_TIMESTAMP_INVALID: "Signal timestamps are contradictory",
+  LOCALIZATION_MISSING: "Pedestrian position cannot be established",
+  LOCALIZATION_STALE: "Position data older than the freshness threshold",
+  LOCALIZATION_TIMESTAMP_INVALID: "Position timestamp is in the future",
+  LOCALIZATION_UNCERTAINTY_TOO_HIGH: "Position confidence insufficient",
+  WRONG_INTERSECTION: "Data belongs to a different intersection",
+  CROSSWALK_AMBIGUOUS: "Position overlaps more than one crosswalk",
+  CROSSWALK_NOT_ESTABLISHED: "Not standing in any crosswalk entry zone",
+  CROSSWALK_MISMATCH: "Established crosswalk differs from the intended one",
+  SYSTEM_UNHEALTHY: "A critical component reports FAULT (or is missing)",
+  SYSTEM_DEGRADED: "A component reports DEGRADED",
+  INSUFFICIENT_REMAINING_TIME: "Not enough WALK time left to cross safely",
+  UNKNOWN_ERROR: "Unexpected engine error — fail-safe",
+};
+const SIG_COLOR = { WALK: "#22c55e", CLEARANCE: "#f59e0b", DONT_WALK: "#ef4444" };
+const PRED_INFO = [["Sv", "Signal valid & WALK"], ["Cv", "Crosswalk established"], ["Lv", "Localization acceptable"],
+                   ["Fv", "Information fresh"], ["Hv", "System healthy"], ["Tv", "Timing satisfied"]];
+const HEALTH_FIELDS = ["edge_service", "signal_input", "localization_input", "clock_status"];
+const BLOCKING = ["CROSSWALK_NOT_ESTABLISHED", "CROSSWALK_MISMATCH", "CROSSWALK_AMBIGUOUS"];
+
+// ---------------------------------------------------------------- state
+let INIT = null, S = null, last = null, lastSpoken = "";
+let route = null;          // from /api/route
+let stepIdx = 0, running = false, finished = false, blocked = null, picking = null;
+
+function defaultState() {
+  const sig = {};
+  for (const cw of INIT.crosswalk_ids)
+    sig[cw] = { mode: "AUTO", age_ms: 50, remaining_ms: "", omit_remaining: false, health: "OK", wrong_intersection: false };
+  return {
+    now_ms: Number($("startT").value) || 0, signals: sig,
+    localization: { present: true, x: 5.5, y: 9.5, heading: 180, uncertainty: 0.75, age_ms: 35, health: "OK", wrong_intersection: false },
+    health: { present: true, edge_service: "OK", signal_input: "OK", localization_input: "OK", clock_status: "OK", map_loaded: true },
+    config: { ...INIT.config },
+  };
+}
+const curStep = () => route && route.steps[stepIdx];
+function payload() {
+  return { now_ms: Math.round(S.now_ms), signals: S.signals, localization: S.localization, health: S.health,
+           intended_crosswalk_id: null, config: S.config, log: true };
+}
+
+// ---------------------------------------------------------------- network
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error || res.statusText);
+  return j;
+}
+let inflight = false, pending = false;
+async function evaluateNow() {
+  if (inflight) { pending = true; return; }
+  inflight = true;
+  try { const r = await api("/api/evaluate", payload()); hideToast(); onResult(r); }
+  catch (e) {
+    showToast(e.message.startsWith("Failed to fetch") ? "Engine server not reachable — is ui_server.py running?" : "Input rejected by model validation: " + e.message);
+  } finally { inflight = false; if (pending) { pending = false; evaluateNow(); } }
+}
+
+// ---------------------------------------------------------------- journey control
+async function planRoute() {
+  const r = await api("/api/route", { source: $("src").value, destination: $("dst").value });
+  if (r.error) { route = null; showRouteMsg("err", r.error); renderSteps(); renderMap(); return false; }
+  route = r; stepIdx = 0; finished = false; blocked = null;
+  S.localization.x = r.source.x; S.localization.y = r.source.y;
+  S.localization.heading = headingTo(r.source.x, r.source.y, ...r.steps[0].to);
+  showRouteMsg("", "");
+  renderSteps();
+  return true;
+}
+async function start() {
+  if (running) return;
+  if (finished || blocked || !route) {
+    S.now_ms = Number($("startT").value) || 0;
+    if (!(await planRoute())) return;
+  }
+  setRunning(true);
+  evaluateNow();
+}
+function setRunning(on) {
+  running = on;
+  $("startBtn").disabled = on;
+  $("pauseBtn").disabled = !on;
+  $("startBtn").textContent = (!on && route && !finished && !blocked && (stepIdx > 0 || S.now_ms !== Number($("startT").value))) ? "▶ Resume" : "▶ Start";
+}
+async function reset() {
+  setRunning(false); finished = false; blocked = null; route = null; stepIdx = 0;
+  S.now_ms = Number($("startT").value) || 0;
+  await planRoute();
+  setRunning(false);
+  evaluateNow();
+}
+
+const headingTo = (x, y, tx, ty) => Math.round((Math.atan2(ty - y, tx - x) * 180 / Math.PI + 360) % 360);
+
+const TICK_MS = 200;
+setInterval(() => {
+  if (!running || !route) return;
+  const dt = TICK_MS;   // real time: 1 s on screen = 1 s of signal time
+  S.now_ms += dt;
+  const st = curStep();
+  if (st && (st.type === "walk" || st.type === "cross")) {
+    const L = S.localization, sp = Number($("walkSpeed").value) || 1.0;
+    const [tx, ty] = st.to, dx = tx - L.x, dy = ty - L.y, dist = Math.hypot(dx, dy), step = sp * dt / 1000;
+    if (dist > 0.01) L.heading = headingTo(L.x, L.y, tx, ty);
+    if (dist <= step) { L.x = tx; L.y = ty; advance(); }
+    else { L.x = +(L.x + dx / dist * step).toFixed(2); L.y = +(L.y + dy / dist * step).toFixed(2); }
+  }
+  evaluateNow();
+}, TICK_MS);
+
+function advance() {
+  stepIdx++;
+  if (stepIdx >= route.steps.length) {
+    stepIdx = route.steps.length - 1; finished = true; setRunning(false);
+    showRouteMsg("ok", "Arrived at destination.");
+  }
+  renderSteps();
+}
+
+// Called with each response. Like triveni_query's routing mode, the WAIT step
+// advances when _phase_timing() reports WALK for that crosswalk.
+function onResult(r) {
+  last = r;
+  const st = curStep();
+  if (running && st && st.type === "wait" && r.timing[st.cw].status === "WALK") advance();
+  renderGuide(r); renderDecision(r); renderPreds(r); renderMap(); renderTimeline(); renderSigLive(); speak(r);
+}
+
+// Routing guidance text, mirroring triveni_query._run_routing
+function guideFor(r) {
+  const s = ms => Math.round(ms / 1000);
+  if (!route) return { state: "—", cue: "Enter a source and destination, then press Start.", meta: "" };
+  if (finished) return { state: "ARRIVED", cue: `You have arrived at ${route.destination.label}.`, meta: "" };
+  const st = curStep();
+  if (st.type === "wait") {
+    const t = r.timing[st.cw];
+    const meta = `${st.cw} walks during ${t.phase_label}`;
+    if (t.status === "WALK") return { state: "GO", cue: `GO NOW! ${s(t.walk_remaining_ms)} s remaining in this phase.`, meta };
+    if (t.status === "CLEARANCE") return { state: "WAIT", cue: `Clearance — do not start. Next WALK in ${s(t.wait_ms)} s.`, meta };
+    const sec = s(t.wait_ms), m = Math.floor(sec / 60);
+    return { state: "WAIT", cue: `DON'T WALK — wait at curb. Next WALK in ${m > 0 ? `${m} min ${sec % 60} s` : `${sec} s`}.`, meta };
+  }
+  if (st.type === "cross") {
+    const t = r.timing[st.cw];
+    return { state: "CROSSING", cue: st.label + ".",
+             meta: t.status === "WALK" ? `${s(t.walk_remaining_ms)} s of WALK left` : `signal now ${t.status}` };
+  }
+  return { state: running ? "WALKING" : "READY", cue: st.label + ".", meta: "" };
+}
+function renderGuide(r) {
+  const g = guideFor(r);
+  $("guide").className = "decision d-" + g.state;
+  $("gState").textContent = g.state;
+  $("gCue").textContent = g.cue;
+  $("gMeta").textContent = [g.meta, `t=${Math.round(S.now_ms)} ms`].filter(Boolean).join(" · ");
+}
+
+// ---------------------------------------------------------------- rendering: journey
+function showRouteMsg(kind, html) { $("routeMsg").innerHTML = html ? `<div class="msg ${kind}">${html}</div>` : ""; }
+function renderSteps() {
+  if (!route) { $("steps").innerHTML = ""; return; }
+  $("steps").innerHTML = route.steps.map((s, i) => {
+    let cls = "", ic = "○";
+    if (i < stepIdx || (finished && i === stepIdx)) { cls = "done"; ic = "✓"; }
+    else if (i === stepIdx) { cls = blocked ? "blocked" : "cur"; ic = blocked ? "✗" : "▶"; }
+    return `<li class="${cls}"><span class="ic">${ic}</span><span>${s.label}</span></li>`;
+  }).join("");
+}
+function activityText() {
+  if (!route) return "";
+  if (finished) return "Arrived";
+  if (blocked) return "Blocked at curb";
+  const st = curStep();
+  if (!running) return "Ready";
+  return st.type === "wait" ? `Waiting at ${st.cw}` : st.type === "cross" ? `Crossing ${st.cw}` : "Walking on sidewalk";
+}
+
+// ---------------------------------------------------------------- rendering: decision
+function cueFor(r) {
+  const d = r.decision, ev = r.evidence, rc = d.reason_codes;
+  const secs = ms => Math.max(0, Math.floor(ms / 1000));
+  if (d.decision === "WALK") return `Walk now — ${d.crosswalk_id}, ${secs(ev.remaining_time_ms)} seconds remaining.`;
+  if (d.decision === "WAIT") {
+    if (rc.includes("INSUFFICIENT_REMAINING_TIME")) return "Wait — not enough time left to cross.";
+    if (ev.signal_state === "CLEARANCE") return "Wait — signal is clearing.";
+    if (ev.signal_state === "DONT_WALK" && ev.remaining_time_ms != null) return `Wait — red light. Walk in ${secs(ev.remaining_time_ms)} seconds.`;
+    return "Wait — red light.";
+  }
+  if (d.decision === "FAULT") return "System fault — do not rely on guidance.";
+  return "Guidance unavailable — " + (REASON[rc[0]] || rc[0]).toLowerCase() + ".";
+}
+function renderDecision(r) {
+  const d = r.decision;
+  $("dState").className = "badge b-" + d.decision;
+  $("dState").textContent = d.decision;
+  $("dReasons").innerHTML = d.reason_codes.map(c => `<div class="reason"><code>${c}</code><span>${REASON[c] || ""}</span></div>`).join("")
+    + `<div class="hint">crosswalk ${d.crosswalk_id ?? "—"} · cue: ${cueFor(r)}</div>`;
+  $("clock").textContent = `now_ms ${Math.round(S.now_ms)}`;
+}
+function renderPreds(r) {
+  const ev = r.evidence, th = ev.thresholds || {}, v = x => x ?? "—";
+  const detail = {
+    Sv: `state=${v(ev.signal_state)}  age=${v(ev.signal_age_ms)} ms`,
+    Cv: `cw=${v(ev.established_crosswalk_id)}  zones=${(ev.candidate_crosswalks || []).map(c => c[0].replace("CW_", "") + ":" + c[1]).join(", ") || "none"}`,
+    Lv: `±${v(ev.position_uncertainty_m)} m (max ${v(th.max_position_uncertainty_m)})  health=${v(ev.localization_health)}`,
+    Fv: `sig ${v(ev.signal_age_ms)}/${v(th.signal_freshness_ms)} ms  loc ${v(ev.localization_age_ms)}/${v(th.localization_freshness_ms)} ms`,
+    Hv: `signal src=${v(ev.signal_source_health)}  loc=${v(ev.localization_health)}`,
+    Tv: `remaining=${v(ev.remaining_time_ms)} ms (min ${v(th.minimum_remaining_walk_time_ms)})`,
+  };
+  $("preds").innerHTML = PRED_INFO.map(([k, name]) => {
+    const ok = !!ev[k];
+    return `<div class="pred ${ok ? "" : "fail"}"><div class="sym">${k[0]}<sub>v</sub></div>
+      <div class="name">${name}</div><span class="chip ${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"}</span>
+      <div class="val" title="${detail[k]}">${detail[k]}</div></div>`;
+  }).join("");
+}
+function speak(r) {
+  const g = guideFor(r), key = g.state + (curStep() ? curStep().label : "");
+  if (!$("speak").checked || !window.speechSynthesis) { lastSpoken = key; return; }
+  if (key === lastSpoken) return;
+  lastSpoken = key; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(g.cue));
+}
+
+// ---------------------------------------------------------------- map
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const pts = poly => poly.map(([x, y]) => `${x},${-y}`).join(" ");
+function centroid(poly) { const n = poly.length; return [poly.reduce((a, p) => a + p[0], 0) / n, poly.reduce((a, p) => a + p[1], 0) / n]; }
+function text(g, x, y, t, attrs = {}) {
+  const e = el("text", { x, y: -y, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": 0.5,
+                         "font-family": "system-ui", "pointer-events": "none", ...attrs }, g);
+  e.textContent = t; return e;
+}
+const ROAD = 3;
+let dynLayer;
+// One head per vehicle approach. Left-hand traffic: e.g. southbound vehicles (from the North)
+// use the east half of the N-S road and see their signal on the east kerb.
+const VEH_HEADS = [
+  { id: "N", axis: "ns", at: [3.9, 13.2],   vertical: true,  cd: [4.65, 13.2, "start"],  arrow: [1.5, 14.4],  dir: [0, -1] },
+  { id: "S", axis: "ns", at: [-3.9, -13.2], vertical: true,  cd: [-4.65, -13.2, "end"],  arrow: [-1.5, -14.4], dir: [0, 1] },
+  { id: "E", axis: "ew", at: [13.2, -4.0],  vertical: false, cd: [13.2, -5.0, "middle"], arrow: [14.4, -1.5], dir: [-1, 0] },
+  { id: "W", axis: "ew", at: [-13.2, 4.0],  vertical: false, cd: [-13.2, 5.0, "middle"], arrow: [-14.4, 1.5], dir: [1, 0] },
+];
+const VEH_COLOR = { red: "#ef4444", amber: "#f59e0b", green: "#22c55e" };
+function arrow(g, x, y, dx, dy) {                       // small lane-direction arrow, world coords
+  const L = 0.9, W = 0.35, px = -dy, py = dx;
+  const tip = [x + dx * L / 2, y + dy * L / 2], tail = [x - dx * L / 2, y - dy * L / 2];
+  el("line", { x1: tail[0], y1: -tail[1], x2: x, y2: -y, stroke: "#64748b", "stroke-width": 0.12 }, g);
+  el("polygon", { points: pts([tip, [x + px * W, y + py * W], [x - px * W, y - py * W]]), fill: "#64748b" }, g);
+}
+// Vehicle signal state from the two-phase cycle: Phase A = E-W vehicles green, Phase B = N-S green.
+function vehicleSignals(ct, c) {
+  const T = c.a + c.clr_a + c.b + c.clr_b;
+  const ew = ct < c.a ? ["green", c.a - ct] : ct < c.a + c.clr_a ? ["amber", c.a + c.clr_a - ct] : ["red", T - ct];
+  const ns = ct < c.a + c.clr_a ? ["red", c.a + c.clr_a - ct]
+           : ct < c.a + c.clr_a + c.b ? ["green", c.a + c.clr_a + c.b - ct] : ["amber", T - ct];
+  return { ew, ns };
+}
+
+function buildStaticMap() {
+  const m = $("map"); m.innerHTML = "";
+  const g = el("g", {}, m); dynLayer = el("g", {}, m);
+  el("rect", { x: -15, y: -15, width: 30, height: 30, fill: "#232b36" }, g);
+  for (let i = -14; i <= 14; i += 2) {
+    el("line", { x1: i, y1: -15, x2: i, y2: 15, stroke: "#2b3442", "stroke-width": 0.03 }, g);
+    el("line", { x1: -15, y1: i, x2: 15, y2: i, stroke: "#2b3442", "stroke-width": 0.03 }, g);
+  }
+  el("rect", { x: -ROAD, y: -15, width: 2 * ROAD, height: 30, fill: "#10141a" }, g);
+  el("rect", { x: -15, y: -ROAD, width: 30, height: 2 * ROAD, fill: "#10141a" }, g);
+  const dash = { stroke: "#d4b106", "stroke-width": 0.08, "stroke-dasharray": "0.6 0.5" };
+  el("line", { x1: 0, y1: -15, x2: 0, y2: -ROAD - 0.2, ...dash }, g);
+  el("line", { x1: 0, y1: ROAD + 0.2, x2: 0, y2: 15, ...dash }, g);
+  el("line", { x1: -15, y1: 0, x2: -ROAD - 0.2, y2: 0, ...dash }, g);
+  el("line", { x1: ROAD + 0.2, y1: 0, x2: 15, y2: 0, ...dash }, g);
+
+  for (const cw of INIT.map.crosswalks) {
+    const all = cw.entry_zone.concat(cw.exit_zone), xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+    if (Math.min(...ys) * Math.max(...ys) > 0) {        // zones share a y-band → crosses the N-S road
+      const y0 = Math.min(...ys), y1 = Math.max(...ys);
+      for (let x = -ROAD + 0.15; x < ROAD; x += 0.6) el("rect", { x, y: -y1, width: 0.32, height: y1 - y0, fill: "#cfd6df", opacity: 0.8 }, g);
+    } else {                                              // crosses the E-W road
+      const x0 = Math.min(...xs), x1 = Math.max(...xs);
+      for (let y = -ROAD + 0.15; y < ROAD; y += 0.6) el("rect", { x: x0, y, width: x1 - x0, height: 0.32, fill: "#cfd6df", opacity: 0.8 }, g);
+    }
+  }
+  // Vehicle stop-lines; left-hand traffic (India)
+  const sl = { "stroke-width": 0.35 };
+  el("line", { id: "stopN", x1: 0, y1: -11.6, x2: ROAD, y2: -11.6, ...sl }, g);
+  el("line", { id: "stopS", x1: -ROAD, y1: 11.6, x2: 0, y2: 11.6, ...sl }, g);
+  el("line", { id: "stopE", x1: 11.6, y1: 0, x2: 11.6, y2: ROAD, ...sl }, g);
+  el("line", { id: "stopW", x1: -11.6, y1: -ROAD, x2: -11.6, y2: 0, ...sl }, g);
+  // Vehicle signal heads (red / amber / green + countdown), on the driver's left kerb
+  for (const v of VEH_HEADS) {
+    arrow(g, v.arrow[0], v.arrow[1], v.dir[0], v.dir[1]);
+    const grp = el("g", { transform: `translate(${v.at[0]},${-v.at[1]})` }, g);
+    const w = v.vertical ? 1.0 : 2.9, h = v.vertical ? 2.9 : 1.0;
+    el("rect", { x: -w / 2, y: -h / 2, width: w, height: h, rx: 0.2, fill: "#05070a", stroke: "#334155", "stroke-width": 0.08 }, grp);
+    ["red", "amber", "green"].forEach((lamp, i) => {
+      const o = (i - 1) * 0.92;
+      el("circle", { id: `veh-${v.id}-${lamp}`, cx: v.vertical ? 0 : o, cy: v.vertical ? o : 0, r: 0.36 }, grp);
+    });
+    const t = el("text", { id: `veh-${v.id}-cd`, x: v.cd[0], y: -v.cd[1], "font-size": 0.62, "font-weight": 700,
+                           "text-anchor": v.cd[2], "dominant-baseline": "middle", "font-family": "ui-monospace,Consolas,monospace" }, g);
+    t.textContent = "";
+  }
+
+  for (const cw of INIT.map.crosswalks) {
+    el("polygon", { id: "z-" + cw.crosswalk_id + "-entry", points: pts(cw.entry_zone), "stroke-width": 0.08 }, g);
+    el("polygon", { id: "z-" + cw.crosswalk_id + "-exit", points: pts(cw.exit_zone), "stroke-width": 0.06, "stroke-dasharray": "0.3 0.2" }, g);
+    const [ex, ey] = centroid(cw.entry_zone), [xx, xy] = centroid(cw.exit_zone);
+    text(g, ex, ey + 0.9, cw.crosswalk_id.replace("CW_", "") + " entry", { fill: "#86efac" });
+    text(g, xx, xy + 0.9, cw.crosswalk_id.replace("CW_", "") + " exit", { fill: "#94a3b8" });
+  }
+  for (const [q, x, y] of [["NE", 13.6, 13.6], ["NW", -13.6, 13.6], ["SE", 13.6, -13.6], ["SW", -13.6, -13.6]])
+    text(g, x, y, q, { fill: "#5b6778", "font-size": 0.7, "font-weight": 700 });
+}
+function signalAnchor(cw) {
+  const [cx, cy] = centroid(cw.entry_zone.concat(cw.exit_zone)), len = Math.hypot(cx, cy) || 1;
+  return [cx / len * 13.0, cy / len * 13.0];
+}
+function marker(g, x, y, label, color) {
+  el("circle", { cx: x, cy: -y, r: 0.55, fill: "none", stroke: color, "stroke-width": 0.12 }, g);
+  text(g, x, y, label, { fill: color, "font-size": 0.55, "font-weight": 700 });
+}
+function renderMap() {
+  if (!INIT) return;
+  const g = dynLayer; g.innerHTML = "";
+  const ev = last ? last.evidence : {}, th = ev.thresholds || INIT.config;
+  const cand = new Set((ev.candidate_crosswalks || []).map(c => c[0] + "-" + c[1]));
+  const est = ev.established_crosswalk_id;
+
+  for (const cw of INIT.map.crosswalks) {
+    const id = cw.crosswalk_id, en = $("z-" + id + "-entry"), ex = $("z-" + id + "-exit");
+    const hitEn = cand.has(id + "-entry"), hitEx = cand.has(id + "-exit");
+    en.setAttribute("fill", id === est ? "rgba(34,197,94,.45)" : hitEn ? "rgba(245,158,11,.35)" : "rgba(34,197,94,.12)");
+    en.setAttribute("stroke", id === est ? "#22c55e" : hitEn ? "#f59e0b" : "#2f7a4a");
+    ex.setAttribute("fill", hitEx ? "rgba(245,158,11,.3)" : "rgba(148,163,184,.08)");
+    ex.setAttribute("stroke", hitEx ? "#f59e0b" : "#64748b");
+    if (!last) continue;
+    const [ax, ay] = signalAnchor(cw), s = last.signals[id];
+    const grp = el("g", { transform: `translate(${ax},${-ay})` }, g);
+    const stale = s && (s.age_ms > th.signal_freshness_ms || s.age_ms < 0);
+    const col = !s ? "#475569" : stale ? "#64748b" : SIG_COLOR[s.state];
+    el("rect", { x: -1.9, y: -0.75, width: 3.8, height: 1.5, rx: 0.3, fill: "#0b0f14", stroke: col, "stroke-width": 0.1 }, grp);
+    el("circle", { cx: -1.3, cy: 0, r: 0.42, fill: col, class: s && s.state === "CLEARANCE" ? "blink" : "" }, grp);
+    const t1 = el("text", { x: -0.7, y: -0.12, "font-size": 0.5, fill: "#e6edf3", "font-family": "system-ui", "font-weight": 700 }, grp);
+    t1.textContent = id.replace("CW_", "");
+    const t2 = el("text", { x: -0.7, y: 0.5, "font-size": 0.42, fill: col, "font-family": "ui-monospace,Consolas,monospace" }, grp);
+    t2.textContent = !s ? "NO DATA" : (s.state === "DONT_WALK" ? "DON'T" : s.state) + (stale ? " STALE" : s.remaining_ms != null ? " " + Math.ceil(s.remaining_ms / 1000) + "s" : "");
+  }
+  if (last) {
+    const vs = vehicleSignals(last.cycle_t, INIT.cycle);
+    const ew = VEH_COLOR[vs.ew[0]], ns = VEH_COLOR[vs.ns[0]];
+    $("stopE").setAttribute("stroke", ew); $("stopW").setAttribute("stroke", ew);
+    $("stopN").setAttribute("stroke", ns); $("stopS").setAttribute("stroke", ns);
+    for (const v of VEH_HEADS) {
+      const [state, rem] = vs[v.axis];
+      for (const lamp of ["red", "amber", "green"])
+        $(`veh-${v.id}-${lamp}`).setAttribute("fill", lamp === state ? VEH_COLOR[lamp] : "#1f2937");
+      const cd = $(`veh-${v.id}-cd`);
+      cd.textContent = Math.ceil(rem / 1000);
+      cd.setAttribute("fill", VEH_COLOR[state]);
+    }
+  }
+
+  const L = S.localization;
+  if (route) {
+    // remaining path
+    const p = [[L.x, L.y]];
+    for (let i = stepIdx; i < route.steps.length; i++) if (route.steps[i].to) p.push(route.steps[i].to);
+    if (!finished && p.length > 1)
+      el("polyline", { points: pts(p), fill: "none", stroke: "#38bdf8", "stroke-width": 0.1, "stroke-dasharray": "0.3 0.25", opacity: 0.75 }, g);
+    marker(g, route.source.x, route.source.y, "S", "#e6edf3");
+    marker(g, route.destination.x, route.destination.y, "D", "#f472b6");
+  }
+  const tooHigh = L.uncertainty > th.max_position_uncertainty_m;
+  const pg = el("g", { opacity: L.present ? 1 : 0.35 }, g);
+  el("circle", { cx: L.x, cy: -L.y, r: Math.max(L.uncertainty, 0.01), fill: tooHigh ? "rgba(239,68,68,.18)" : "rgba(56,189,248,.18)",
+                 stroke: tooHigh ? "#ef4444" : "#38bdf8", "stroke-width": 0.06 }, pg);
+  const h = L.heading * Math.PI / 180;
+  el("line", { x1: L.x, y1: -L.y, x2: L.x + Math.cos(h) * 1.1, y2: -L.y - Math.sin(h) * 1.1, stroke: "#e6edf3", "stroke-width": 0.12, "stroke-linecap": "round" }, pg);
+  el("circle", { cx: L.x, cy: -L.y, r: 0.38, fill: "#38bdf8", stroke: "#0b0f14", "stroke-width": 0.08 }, pg);
+}
+function worldFromEvent(e) {
+  const m = $("map"), p = m.createSVGPoint();
+  p.x = e.clientX; p.y = e.clientY;
+  const w = p.matrixTransform(m.getScreenCTM().inverse());
+  return [Math.round(w.x * 10) / 10, Math.round(-w.y * 10) / 10];
+}
+function setPicking(which) {
+  picking = picking === which ? null : which;
+  $("pickSrc").classList.toggle("on", picking === "src");
+  $("pickDst").classList.toggle("on", picking === "dst");
+  $("map").classList.toggle("picking", !!picking);
+  $("cursor").textContent = picking ? `click map to set ${picking === "src" ? "source" : "destination"}` : "";
+}
+function setupMapInput() {
+  const m = $("map");
+  m.addEventListener("pointermove", e => {
+    const [x, y] = worldFromEvent(e);
+    $("cursor").textContent = (picking ? `set ${picking === "src" ? "source" : "destination"} → ` : "") + `x=${x.toFixed(1)}  y=${y.toFixed(1)}`;
+  });
+  m.addEventListener("pointerleave", () => {
+    $("cursor").textContent = picking ? `click map to set ${picking === "src" ? "source" : "destination"}` : "";
+  });
+  m.addEventListener("click", e => {
+    if (!picking) return;
+    const [x, y] = worldFromEvent(e);
+    $(picking).value = `${x} ${y}`;
+    setPicking(null);
+    reset();
+  });
+}
+
+// ---------------------------------------------------------------- timeline
+function buildTimeline() {
+  const c = INIT.cycle;
+  for (const [label, ms, col] of [["A · N/S crosswalks WALK", c.a, "#166534"], ["clr", c.clr_a, "#92400e"],
+                                  ["B · E/W crosswalks WALK", c.b, "#1e3a8a"], ["clr", c.clr_b, "#92400e"]]) {
+    const d = document.createElement("div");
+    d.style.width = (ms / c.total * 100) + "%"; d.style.background = col; d.textContent = label;
+    $("timeline").insertBefore(d, $("playhead"));
+  }
+}
+function renderTimeline() {
+  $("playhead").style.left = (last.cycle_t / INIT.cycle.total * 100) + "%";
+  $("phaseLabel").textContent = `${last.phase} · cycle t=${(last.cycle_t / 1000).toFixed(1)} s`;
+}
+
+// ---------------------------------------------------------------- condition forms
+function buildForms() {
+  $("sigRows").innerHTML = INIT.crosswalk_ids.map(cw => `<tr>
+    <td class="mono">${cw}</td><td class="mono" id="live-${cw}">—</td>
+    <td><select data-sig="${cw}" data-k="mode"><option value="AUTO">Auto</option><option>WALK</option><option value="DONT_WALK">DONT_WALK</option><option>CLEARANCE</option><option value="MISSING">Missing</option></select></td>
+    <td><input type="number" data-sig="${cw}" data-k="age_ms" step="50"></td>
+    <td><div style="display:flex;gap:6px;align-items:center"><input type="number" data-sig="${cw}" data-k="remaining_ms" step="1000" placeholder="auto">
+      <label class="hint" style="white-space:nowrap"><input type="checkbox" data-sig="${cw}" data-k="omit_remaining"> none</label></div></td>
+    <td><select data-sig="${cw}" data-k="health"><option>OK</option><option>DEGRADED</option><option>FAULT</option></select></td>
+    <td><input type="checkbox" data-sig="${cw}" data-k="wrong_intersection"></td></tr>`).join("");
+  document.querySelectorAll("[data-sig]").forEach(inp => inp.addEventListener("input", () => {
+    const o = S.signals[inp.dataset.sig], k = inp.dataset.k;
+    o[k] = inp.type === "checkbox" ? inp.checked : inp.type === "number" ? (inp.value === "" ? "" : Number(inp.value)) : inp.value;
+    changed();
+  }));
+  const bindLoc = (id, k, kind) => $(id).addEventListener("input", () => {
+    S.localization[k] = kind === "chk" ? $(id).checked : kind === "str" ? $(id).value : Number($(id).value); changed();
+  });
+  bindLoc("locUnc", "uncertainty"); bindLoc("locUncRange", "uncertainty"); bindLoc("locAge", "age_ms");
+  bindLoc("locHealth", "health", "str"); bindLoc("locPresent", "present", "chk"); bindLoc("locWrongInt", "wrong_intersection", "chk");
+
+  const hf = $("healthForm");
+  for (const f of HEALTH_FIELDS)
+    hf.insertAdjacentHTML("beforeend", `<label class="mono">${f}</label><div class="row"><select id="h_${f}"><option>OK</option><option>DEGRADED</option><option>FAULT</option></select></div>`);
+  hf.insertAdjacentHTML("beforeend", `<label class="mono">map_loaded</label><div class="row"><input type="checkbox" id="h_map_loaded"></div>`);
+  for (const f of HEALTH_FIELDS) $("h_" + f).addEventListener("input", () => { S.health[f] = $("h_" + f).value; changed(); });
+  $("h_map_loaded").addEventListener("input", () => { S.health.map_loaded = $("h_map_loaded").checked; changed(); });
+  $("hPresent").addEventListener("input", () => { S.health.present = $("hPresent").checked; changed(); });
+
+  for (const k of Object.keys(INIT.config)) {
+    const inp = $("c_" + k); if (!inp) continue;
+    inp.addEventListener("input", () => { S.config[k] = inp.type === "checkbox" ? inp.checked : inp.type === "number" ? Number(inp.value) : inp.value; changed(); });
+  }
+  $("cfgReset").addEventListener("click", () => { S.config = { ...INIT.config }; changed(); });
+
+  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    document.querySelectorAll(".pane").forEach(p => p.hidden = p.id !== "pane-" + t.dataset.tab);
+  }));
+
+  // Journey inputs
+  const names = Object.keys(INIT.named_locations);
+  $("locs").innerHTML = names.map(n => `<option value="${n}">`).join("");
+  const examples = [["CW_NORTH", "CW_NORTH_FAR"], ["CW_EAST", "CW_EAST_FAR"], ["CW_SOUTH", "CW_SOUTH_FAR"], ["CW_WEST", "CW_WEST_FAR"],
+                    ["NE", "SW"], ["NW", "SE"], ["5.5 9.5", "-9.5 -5.5"]];
+  $("chips").innerHTML = examples.map(([a, b]) => `<button data-a="${a}" data-b="${b}">${a} → ${b}</button>`).join("");
+  $("chips").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    $("src").value = b.dataset.a; $("dst").value = b.dataset.b; reset();
+  });
+  $("src").addEventListener("change", reset);
+  $("dst").addEventListener("change", reset);
+  $("startT").addEventListener("change", reset);
+  $("pickSrc").addEventListener("click", () => setPicking("src"));
+  $("pickDst").addEventListener("click", () => setPicking("dst"));
+  $("startBtn").addEventListener("click", start);
+  $("pauseBtn").addEventListener("click", () => setRunning(false));
+  $("resetBtn").addEventListener("click", reset);
+}
+function syncForm() {
+  for (const cw of INIT.crosswalk_ids) {
+    const o = S.signals[cw];
+    document.querySelectorAll(`[data-sig="${cw}"]`).forEach(inp => {
+      const v = o[inp.dataset.k];
+      if (inp.type === "checkbox") inp.checked = !!v; else if (document.activeElement !== inp) inp.value = v;
+    });
+  }
+  const L = S.localization, setv = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };
+  setv("locUnc", L.uncertainty); setv("locUncRange", L.uncertainty); setv("locAge", L.age_ms);
+  $("locHealth").value = L.health; $("locPresent").checked = L.present; $("locWrongInt").checked = L.wrong_intersection;
+  for (const f of HEALTH_FIELDS) $("h_" + f).value = S.health[f];
+  $("h_map_loaded").checked = S.health.map_loaded; $("hPresent").checked = S.health.present;
+  for (const k of Object.keys(S.config)) {
+    const inp = $("c_" + k); if (!inp) continue;
+    if (inp.type === "checkbox") inp.checked = !!S.config[k]; else if (document.activeElement !== inp) inp.value = S.config[k];
+  }
+}
+function renderSigLive() {
+  for (const cw of INIT.crosswalk_ids) {
+    const s = last.signals[cw], cell = $("live-" + cw);
+    cell.innerHTML = !s ? '<span class="hint">missing</span>'
+      : `<span style="color:${SIG_COLOR[s.state]}">${s.state}</span> <span class="hint">${s.remaining_ms ?? "–"}</span>`;
+  }
+}
+function changed() {
+  syncForm(); renderMap();
+  // A changed condition may unblock a stopped journey: let the user resume.
+  if (blocked) { blocked = null; showRouteMsg("", ""); renderSteps(); setRunning(false); }
+  evaluateNow();
+}
+
+function showToast(msg) { $("toast").textContent = msg; $("toast").hidden = false; }
+function hideToast() { $("toast").hidden = true; }
+
+(async function boot() {
+  try { INIT = await api("/api/init"); }
+  catch (e) { showToast("Could not reach the engine server. Start it with: python ui_server.py"); return; }
+  $("intName").textContent = `${INIT.map.name || ""} · ${INIT.intersection_id}`;
+  S = defaultState();
+  buildStaticMap(); buildTimeline(); buildForms(); setupMapInput(); syncForm();
+  await reset();
+})();
+</script>
+</body>
+</html>
